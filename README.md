@@ -104,8 +104,7 @@ listen([
 ]);
 ```
 
-Remember that, as we're using the udnerlying CI4 events system, the listeners are executed in the order they're defined by default. 
-You can also return false from your listener method to stop subsequent events from being executed.
+>The listeners will be executed in the order they're indexed in the array and, as we're using the udnerlying CI4 events system, you can also return `false` from your listener method to stop subsequent events from being executed.
 
 ### 4. Trigger the Event
 

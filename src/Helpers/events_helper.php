@@ -20,8 +20,7 @@ if (! function_exists('listen')) {
     function listen(array $map): void
     {
         foreach ($map as $event => $listeners) {
-            foreach ((array) $listeners as $listener) {
-
+            foreach ((array) $listeners as $index => $listener) {
                 if (is_string($listener) && class_exists($listener)) {
                     $listener = match (true) {
                         method_exists($listener, '__invoke') => new $listener(),
@@ -30,7 +29,7 @@ if (! function_exists('listen')) {
                     };
                 }
 
-                Events::on($event, $listener);
+                Events::on($event, $listener, $index + 1);
             }
         }
     }
