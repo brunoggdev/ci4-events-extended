@@ -1,0 +1,41 @@
+{
+    "name": "brunoggdev/ci4-events-extended",
+    "description": "Lightweight and easy to use helpers and tooling to enhance CodeIgniter4 event system on user code to a more OOP approach.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Bruno Gomes",
+            "email": "brunoggdev@gmail.com"
+        }
+    ],
+    "require": {},
+    "require-dev": {
+        "codeigniter4/framework": "^4.3",
+        "codeigniter4/devkit": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Brunoggdev\\EventsExtended\\": "src/"
+        },
+        "files": [
+            "src/Helpers/events_helper.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Brunoggdev\\EventsExtended\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "cs-fix": "php-cs-fixer fix --ansi --verbose --diff"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    }
+}
