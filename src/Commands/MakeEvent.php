@@ -5,65 +5,36 @@ declare(strict_types=1);
 namespace Brunoggdev\EventsExtended\Commands;
 
 use CodeIgniter\CLI\BaseCommand;
-use CodeIgniter\CLI\CLI;
+use CodeIgniter\CLI\GeneratorTrait;
 
 class MakeEvent extends BaseCommand
 {
+    use GeneratorTrait;
+
     protected $group       = 'EventsExtended';
     protected $name        = 'make:event';
-    protected $description = 'Create a new event class in App\\Events';
-    protected $usage       = 'make:event [EventName] or make:event [Folder/Name]';
+    protected $description = 'Generates a new event class.';
+    protected $usage       = 'make:event <name> [options]';
     protected $arguments   = [
         'name' => 'The event class name. Can include subfolders (e.g. User/Registered).',
+    ];
+    protected $options = [
+        '--namespace' => 'Set root namespace. Default: "APP_NAMESPACE".',
+        '--force'     => 'Force overwrite existing file.',
     ];
 
     public function run(array $params): void
     {
-        $input = $params[0] ?? null;
+        $this->component = 'Event';
+        $this->directory = 'Events';
+        $this->template  = 'event.tpl.php';
 
-        if (! $input) {
-            CLI::error('Please provide an event name.');
+        $this->classNameLang = 'CLI.generator.className.default';
+        $this->generateClass($params);
+    }
 
-            return;
-        }
-
-        $parts     = explode('/', $input);
-        $eventName = ucfirst(array_pop($parts));
-
-        $folderParts     = array_map('ucfirst', $parts);
-        $folderPath      = $folderParts ? implode('/', $folderParts) . '/' : '';
-        $namespaceSuffix = $folderParts ? '\\' . implode('\\', $folderParts) : '';
-
-        $baseDir   = rtrim(config('EventsExtended')->eventsPath, '/') . "/{$folderPath}";
-        $filePath  = $baseDir . "{$eventName}.php";
-        $namespace = 'App\\Events' . $namespaceSuffix;
-
-        if (file_exists($filePath)) {
-            CLI::error("Event '{$eventName}' already exists at {$filePath}");
-
-            return;
-        }
-
-        if (! is_dir($baseDir)) {
-            mkdir($baseDir, 0755, true);
-            CLI::write("Created directory: {$baseDir}", 'yellow');
-        }
-
-        $template = <<<PHP
-            <?php
-
-            namespace {$namespace};
-
-            class {$eventName}
-            {
-                public function __construct(
-                    // your event params here
-                ) {}
-            }
-            PHP;
-
-        file_put_contents($filePath, $template);
-
-        CLI::write("Event created: {$filePath}", 'green');
+    protected function renderTemplate(array $data = []): string
+    {
+        return view('Brunoggdev\EventsExtended\Commands\Views\\' . $this->template, $data, ['debug' => false]);
     }
 }

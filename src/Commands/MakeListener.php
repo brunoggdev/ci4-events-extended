@@ -6,93 +6,87 @@ namespace Brunoggdev\EventsExtended\Commands;
 
 use CodeIgniter\CLI\BaseCommand;
 use CodeIgniter\CLI\CLI;
+use CodeIgniter\CLI\GeneratorTrait;
 
 class MakeListener extends BaseCommand
 {
+    use GeneratorTrait;
+
     protected $group       = 'EventsExtended';
     protected $name        = 'make:listener';
-    protected $description = 'Creates a new event listener class and registers it into Config/Events.php';
-    protected $usage       = 'make:listener ListenerName EventName';
-    protected $arguments   = [];
-    protected $options     = [];
+    protected $description = 'Generates a new listener class, its event if missing, and registers both in Config/Events.php.';
+    protected $usage       = 'make:listener <name> <event> [options]';
+    protected $arguments   = [
+        'name'  => 'The listener class name.',
+        'event' => 'The event it listens to: a name inside the Events folder (e.g. UserUpdated) or a FQCN.',
+    ];
+    protected $options = [
+        '--namespace' => 'Set root namespace. Default: "APP_NAMESPACE".',
+        '--force'     => 'Force overwrite existing file.',
+    ];
+
+    /**
+     * Fully qualified class name of the event being listened to.
+     */
+    private string $eventClass = '';
 
     public function run(array $params): void
     {
-        $listener = $params[0] ?? null;
-        $event    = $params[1] ?? null;
+        $this->component = 'Listener';
+        $this->directory = 'Events\\Listeners';
+        $this->template  = 'listener.tpl.php';
+        $this->params    = $params;
 
-        if (! $listener) {
-            CLI::error('You must provide a listener name.');
+        $event = $params[1] ?? CLI::getSegment(3);
 
-            return;
-        }
-
-        if (! $event) {
+        if (! is_string($event) || $event === '') {
             CLI::error('You must provide an event in the second argument.');
 
             return;
         }
 
-        $listener = ucfirst($listener);
-        $event    = ucfirst($event);
+        $listenerClass = $this->qualifyClassName();
 
-        $eventsPath   = rtrim(config('EventsExtended')->eventsPath, '/');
-        $listenerPath = "{$eventsPath}/Listeners/{$listener}.php";
-        $eventPath    = "{$eventsPath}/{$event}.php";
+        // Events live next to the Listeners folder: App\Events\Listeners\X => App\Events\{event}
+        $this->eventClass = str_contains($event, '\\')
+            ? ltrim($event, '\\')
+            : preg_replace('/\\\\Listeners$/', '', $this->namespaceOf($listenerClass)) . '\\' . str_replace('/', '\\', $event);
 
-        // Ensure directories exist
-        $this->ensureDir("{$eventsPath}/Listeners");
+        $this->generateClass($this->params);
 
-        // Create listener if needed
-        if (! file_exists($listenerPath)) {
-            file_put_contents($listenerPath, $this->listenerTemplate($listener, $event));
-            CLI::write("Created Listener: {$listenerPath}", 'green');
-        } else {
-            CLI::write("Listener already exists: {$listenerPath}", 'yellow');
+        $target = $this->buildPath($listenerClass);
+
+        if ($target === '' || ! is_file($target)) {
+            return;
         }
 
-        // Create event if needed
-        if (! file_exists($eventPath)) {
-            $this->call('make:event', [$event]);
-        } else {
-            CLI::write("Event already exists: {$eventPath}", 'yellow');
+        if (! str_contains($event, '\\') && ! class_exists($this->eventClass)) {
+            $this->call('make:event', [$this->eventClass, 'namespace' => $this->getOption('namespace') ?? APP_NAMESPACE]);
         }
 
-        // Update Events.php (imports + listen block)
-        $this->updateEventsFile($listener, $event);
+        $this->updateEventsFile($listenerClass, $this->eventClass);
     }
 
-    protected function listenerTemplate(string $listener, string $event): string
+    protected function prepare(string $class): string
     {
-        return <<<PHP
-            <?php
+        return $this->parseTemplate(
+            $class,
+            ['{eventClass}', '{event}'],
+            [$this->eventClass, $this->shortName($this->eventClass)],
+        );
+    }
 
-            namespace App\\Events\\Listeners;
-
-            use App\\Events\\{$event};
-
-            class {$listener}
-            {
-                /**
-                 * Handle the event.
-                 *
-                 * You can return `false` to stop subsequent listeners from being called
-                 */
-                public function __invoke({$event} \$event)
-                {
-                    // Handle the event
-                }
-            }
-
-            PHP;
+    protected function renderTemplate(array $data = []): string
+    {
+        return view('Brunoggdev\EventsExtended\Commands\Views\\' . $this->template, $data, ['debug' => false]);
     }
 
     /**
      * Update Config/Events.php:
-     *  - ensure imports inside the two grouped blocks (Listeners and Events) are present and alphabetical
-     *  - ensure the listen([...]) array contains the event => [listeners...] mapping, merged with existing entries
+     *  - ensure grouped imports for the listener and event namespaces are present and alphabetical
+     *  - ensure the Events::listen([...]) array contains the event => [listeners...] mapping, merged with existing entries
      */
-    protected function updateEventsFile(string $listener, string $event): void
+    protected function updateEventsFile(string $listenerFQCN, string $eventFQCN): void
     {
         $path = APPPATH . 'Config/Events.php';
 
@@ -104,20 +98,20 @@ class MakeListener extends BaseCommand
 
         $content = file_get_contents($path);
 
-        // Compute FQCNs and short names
-        $eventFQCN     = "App\\Events\\{$event}";
-        $listenerFQCN  = "App\\Events\\Listeners\\{$listener}";
-        $eventShort    = $event;
-        $listenerShort = $listener;
+        $eventShort    = $this->shortName($eventFQCN);
+        $listenerShort = $this->shortName($listenerFQCN);
 
         // 1) Update grouped imports for Listeners
-        $content = $this->ensureGroupedImport($content, 'App\\Events\\Listeners', $listenerShort, $listenerFQCN);
+        $content = $this->ensureGroupedImport($content, $this->namespaceOf($listenerFQCN), $listenerShort, $listenerFQCN);
 
         // 2) Update grouped imports for Events
-        $content = $this->ensureGroupedImport($content, 'App\\Events', $eventShort, $eventFQCN);
+        $content = $this->ensureGroupedImport($content, $this->namespaceOf($eventFQCN), $eventShort, $eventFQCN);
 
-        // 3) Update listen([...]) block (merge and sort)
+        // 3) Update Events::listen([...]) block (merge and sort)
         $content = $this->mergeListenBlock($content, $eventShort, $listenerShort);
+
+        // 4) Make sure Events resolves to the package class
+        $content = $this->ensureEventsImport($content);
 
         // Save back
         file_put_contents($path, $content);
@@ -233,7 +227,7 @@ class MakeListener extends BaseCommand
      */
     protected function mergeListenBlock(string $content, string $eventShort, string $listenerShort): string
     {
-        $pattern = '/listen\s*\(\s*\[(.*?)\]\s*\);/s';
+        $pattern = '/(?:Events::)?listen\s*\(\s*\[(.*?)\]\s*\);/s';
 
         if (! preg_match($pattern, $content, $m)) {
             // no listen block found - append a new one at the end of imports area
@@ -241,9 +235,10 @@ class MakeListener extends BaseCommand
                 $eventShort => [$listenerShort],
             ];
             $newListen = $this->buildListenBlockFromMap($newMap);
-            // place after grouped imports if present, otherwise append at file end
-            if (preg_match('/use\s+App\\\\\\Events\\\\\{[\s\S]*?\};/m', $content, $mm, PREG_OFFSET_CAPTURE)) {
-                $pos     = $mm[0][1] + strlen($mm[0][0]);
+            // place after the last import if present, otherwise append at file end
+            if (preg_match_all('/^use\s+[^;]+;/m', $content, $mm, PREG_OFFSET_CAPTURE) > 0) {
+                $last    = end($mm[0]);
+                $pos     = $last[1] + strlen($last[0]);
                 $content = substr_replace($content, "\n\n{$newListen}\n", $pos, 0);
             } else {
                 $content .= "\n\n{$newListen}\n";
@@ -283,9 +278,9 @@ class MakeListener extends BaseCommand
             $map[$eventShort][] = $listenerShort;
         }
 
-        // Sort handlers and events
+        // Keep listener order (it is the execution order), sort events only
         foreach ($map as $k => $list) {
-            $map[$k] = $this->uniqueSorted($list);
+            $map[$k] = array_values(array_unique($list));
         }
         ksort($map, SORT_NATURAL | SORT_FLAG_CASE);
 
@@ -294,6 +289,28 @@ class MakeListener extends BaseCommand
 
         // Replace the old listen block in the content
         return preg_replace($pattern, $newListen, $content, 1);
+    }
+
+    /**
+     * Swap CodeIgniter's Events import for the package one, or add it when missing.
+     */
+    protected function ensureEventsImport(string $content): string
+    {
+        $import = 'use Brunoggdev\\EventsExtended\\Events;';
+
+        if (str_contains($content, $import)) {
+            return $content;
+        }
+
+        if (preg_match('/^use\s+CodeIgniter\\\\Events\\\\Events\s*;/m', $content)) {
+            return preg_replace('/^use\s+CodeIgniter\\\\Events\\\\Events\s*;/m', $import, $content, 1);
+        }
+
+        if (preg_match('/namespace\s+[A-Za-z0-9_\\\\]+;\s*/', $content, $nm, PREG_OFFSET_CAPTURE)) {
+            return substr_replace($content, "\n{$import}\n", $nm[0][1] + strlen($nm[0][0]), 0);
+        }
+
+        return preg_replace('/<\?php\s*/', "<?php\n\n{$import}\n", $content, 1);
     }
 
     protected function buildListenBlockFromMap(array $map): string
@@ -311,13 +328,16 @@ class MakeListener extends BaseCommand
 
         $inner = implode("\n", $lines);
 
-        return "listen([\n{$inner}\n]);";
+        return "Events::listen([\n{$inner}\n]);";
     }
 
-    protected function ensureDir(string $path): void
+    private function shortName(string $class): string
     {
-        if (! is_dir($path)) {
-            mkdir($path, 0755, true);
-        }
+        return substr(strrchr('\\' . $class, '\\'), 1);
+    }
+
+    private function namespaceOf(string $class): string
+    {
+        return substr($class, 0, (int) strrpos($class, '\\'));
     }
 }
